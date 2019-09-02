@@ -1,0 +1,74 @@
+#subscriber-email
+example@example.com
+
+#emr-cli-1
+aws emr create-cluster \
+--applications Name=Spark Name=Hadoop Name=Hive \
+--tags 'Name=TEST-EMR' \
+--ec2-attributes '{"KeyName":"ec2key","InstanceProfile":"EMR_EC2_DefaultRole","SubnetId":"subnet-60716608","EmrManagedSlaveSecurityGroup":"sg-03a5b0c01e1ff3c87","EmrManagedMasterSecurityGroup":"sg-0e10dc7742dc738ef"}' \
+--release-label emr-5.0.0 \
+--log-uri 's3n://aws-logs-522781160594-ap-northeast-2/elasticmapreduce/' \
+--steps '[{"Args":["s3://public-access-sample-code/scripts/spark-runner.sh","MovieDataStatistics-1.0.0.jar","-d","20190821","s3://samples-euijj/ml-latest/movies.csv s3://samples-euijj/ml-latest/ratings.csv s3://samples-euijj/ml-latest/tags.csv s3://basketball-tool-bucket-20190821/output1"],"Type":"CUSTOM_JAR","ActionOnFailure":"CONTINUE","Jar":"s3://ap-northeast-2.elasticmapreduce/libs/script-runner/script-runner.jar","Properties":"","Name":"statistics data"},{"Args":["s3://public-access-sample-code/scripts/spark-runner.sh","MovieDataClustering-1.0.0.jar","-d","20190821","s3://basketball-tool-bucket-20190821/output1 s3://basketball-tool-bucket-20190821/predict1"],"Type":"CUSTOM_JAR","ActionOnFailure":"CONTINUE","Jar":"s3://ap-northeast-2.elasticmapreduce/libs/script-runner/script-runner.jar","Properties":"","Name":"clustering data"}]' \
+--instance-groups '[{"InstanceCount":1,"InstanceGroupType":"MASTER","InstanceType":"r3.xlarge","Name":"Master - 1"},{"InstanceCount":3,"BidPrice":"OnDemandPrice","EbsConfiguration":{"EbsBlockDeviceConfigs":[{"VolumeSpecification":{"SizeInGB":32,"VolumeType":"gp2"},"VolumesPerInstance":1}]},"InstanceGroupType":"CORE","InstanceType":"m4.large","Name":"Core - 2"}]' \
+--auto-scaling-role EMR_AutoScaling_DefaultRole \
+--ebs-root-volume-size 10 \
+--service-role EMR_DefaultRole \
+--enable-debugging \
+--name 'test-emr-20190821-spark20-test' \
+--scale-down-behavior TERMINATE_AT_TASK_COMPLETION \
+--region ap-northeast-2 \
+--auto-terminate
+
+#emr-cli-2
+aws emr create-cluster \
+--applications Name=Spark Name=Hadoop Name=Hive \
+--tags 'Name=TEST-EMR' \
+--ec2-attributes '{"KeyName":"ec2key","InstanceProfile":"EMR_EC2_DefaultRole","SubnetId":"subnet-60716608","EmrManagedSlaveSecurityGroup":"sg-03a5b0c01e1ff3c87","EmrManagedMasterSecurityGroup":"sg-0e10dc7742dc738ef"}' \
+--release-label emr-5.24.1 \
+--log-uri 's3n://aws-logs-522781160594-ap-northeast-2/elasticmapreduce/' \
+--steps '[{"Args":["s3://public-access-sample-code/scripts/spark-runner.sh","MovieDataStatistics-1.0.0.jar","-d","20190821","s3://samples-euijj/ml-latest/movies.csv s3://samples-euijj/ml-latest/ratings.csv s3://samples-euijj/ml-latest/tags.csv s3://basketball-tool-bucket-20190821/output2"],"Type":"CUSTOM_JAR","ActionOnFailure":"CONTINUE","Jar":"s3://ap-northeast-2.elasticmapreduce/libs/script-runner/script-runner.jar","Properties":"","Name":"statistics data"},{"Args":["s3://public-access-sample-code/scripts/spark-runner.sh","MovieDataClustering-1.0.0.jar","-d","20190821","s3://basketball-tool-bucket-20190821/output2 s3://basketball-tool-bucket-20190821/predict2"],"Type":"CUSTOM_JAR","ActionOnFailure":"CONTINUE","Jar":"s3://ap-northeast-2.elasticmapreduce/libs/script-runner/script-runner.jar","Properties":"","Name":"clustering data"}]' \
+--instance-groups '[{"InstanceCount":1,"InstanceGroupType":"MASTER","InstanceType":"r3.xlarge","Name":"Master - 1"},{"InstanceCount":3,"EbsConfiguration":{"EbsBlockDeviceConfigs":[{"VolumeSpecification":{"SizeInGB":32,"VolumeType":"gp2"},"VolumesPerInstance":1}]},"InstanceGroupType":"CORE","InstanceType":"m4.large","Name":"Core - 2"}]' \
+--auto-scaling-role EMR_AutoScaling_DefaultRole \
+--ebs-root-volume-size 10 \
+--service-role EMR_DefaultRole \
+--enable-debugging \
+--name 'test-emr-20190821-spark24-test' \
+--scale-down-behavior TERMINATE_AT_TASK_COMPLETION \
+--region ap-northeast-2 \
+--auto-terminate
+
+#table1
+CREATE EXTERNAL TABLE IF NOT EXISTS table1 (
+  label STRING,
+  prediction STRING
+) 
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY '\t'
+location 's3://basketball-tool-bucket-20190821/predict1'
+
+#table2
+CREATE EXTERNAL TABLE IF NOT EXISTS table2 (
+  label STRING,
+  prediction STRING
+) 
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY '\t'
+location 's3://basketball-tool-bucket-20190821/predict2'
+
+#comparing-table
+CREATE TABLE IF NOT EXISTS result AS
+SELECT A.label, A.prediction as predictionA, B.prediction as predictionB
+FROM table1 A
+JOIN table2 B 
+ON (A.label = B.label);
+
+#result
+SELECT 
+    count(*) as total_count, 
+    (SELECT count(*) FROM comp.result WHERE predictionA != predictionB) as diff_count,
+    (SELECT count(*) FROM comp.result WHERE predictionA != predictionB)/CAST(count(*) as double) as ratio
+FROM result;
+
+
+
+

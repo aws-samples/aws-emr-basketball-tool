@@ -1,0 +1,231 @@
+# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+Description: checking differences of outputs when upgrading EMR.
+Parameters:
+  NotificationBucket:
+    Type: String
+    Description: S3 bucket which is used for Lambda event notification
+
+Resources:
+  Shoot:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: shoot.lambda_handler
+      Runtime: python3.7
+      CodeUri: ./src/
+      Description: ''
+      MemorySize: 256
+      Timeout: 300
+      Role: !GetAtt LambdaEmrCreationRole.Arn
+      Events:
+        BucketEvent1:
+          Type: S3
+          Properties:
+            Bucket:
+              Ref: Bucket1
+            Events:
+              - 's3:ObjectCreated:Put'
+              - 's3:ObjectCreated:Post'
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: request
+                  - Name: suffix
+                    Value: request.txt
+
+  Bucket1:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref NotificationBucket
+ 
+  S3InvokeLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref Shoot
+      Principal: s3.amazonaws.com
+      SourceArn: !Sub arn:aws:s3:::${NotificationBucket}
+
+  OutputChecker1:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: s3_checker1.lambda_handler
+      Runtime: python3.7
+      CodeUri: ./src/
+      Description: ''
+      MemorySize: 128
+      Timeout: 30
+      Role: !GetAtt LambdaS3ExecutionRole.Arn
+      Events:
+        BucketEvent1:
+          Type: S3
+          Properties:
+            Bucket:
+              Ref: Bucket1
+            Events:
+              - 's3:ObjectCreated:Post'
+              - 's3:ObjectCreated:Put'
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: predict1
+
+  OutputChecker2:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: s3_checker2.lambda_handler
+      Runtime: python3.7
+      CodeUri: ./src/
+      Description: ''
+      MemorySize: 128
+      Timeout: 30
+      Role: !GetAtt LambdaS3ExecutionRole.Arn
+      Events:
+        BucketEvent1:
+          Type: S3
+          Properties:
+            Bucket:
+              Ref: Bucket1
+            Events:
+              - 's3:ObjectCreated:Post'
+              - 's3:ObjectCreated:Put'
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: predict2
+
+  Comparison:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: athena_query.lambda_handler
+      Runtime: python3.7
+      CodeUri: ./src/
+      Description: ''
+      MemorySize: 128
+      Timeout: 30
+      Role: !GetAtt LambdaAthenaQueryRole.Arn
+      Events:
+        BucketEvent1:
+          Type: S3
+          Properties:
+            Bucket:
+              Ref: Bucket1
+            Events:
+              - 's3:ObjectCreated:Post'
+              - 's3:ObjectCreated:Put'
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: status/
+                  - Name: suffix
+                    Value: status.txt
+
+  Scorer:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: scorer.lambda_handler
+      Runtime: python3.7
+      CodeUri: ./src/
+      Description: ''
+      MemorySize: 128
+      Timeout: 60
+      Role: !GetAtt LambdaScorerRole.Arn
+      Events:
+        BucketEvent1:
+          Type: S3
+          Properties:
+            Bucket:
+              Ref: Bucket1
+            Events:
+              - 's3:ObjectCreated:Post'
+              - 's3:ObjectCreated:Put'
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: result
+
+  LambdaEmrCreationRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+        - "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+        - "arn:aws:iam::aws:policy/AmazonElasticMapReduceFullAccess"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Sid: "AllowLambdaServiceToAssumeRole"
+            Effect: "Allow"
+            Action:
+              - "sts:AssumeRole"
+            Principal:
+              Service:
+                - "lambda.amazonaws.com"
+
+  LambdaS3ExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+        - "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Sid: "AllowLambdaServiceToAssumeRole"
+            Effect: "Allow"
+            Action:
+              - "sts:AssumeRole"
+            Principal:
+              Service:
+                - "lambda.amazonaws.com"
+
+  LambdaAthenaQueryRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+        - "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+        - "arn:aws:iam::aws:policy/AmazonAthenaFullAccess"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Sid: "AllowLambdaServiceToAssumeRole"
+            Effect: "Allow"
+            Action:
+              - "sts:AssumeRole"
+            Principal:
+              Service:
+                - "lambda.amazonaws.com"
+
+  LambdaScorerRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+        - "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+        - "arn:aws:iam::aws:policy/AmazonSESFullAccess"
+        - "arn:aws:iam::aws:policy/AmazonElasticMapReduceReadOnlyAccess"
+
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Sid: "AllowLambdaServiceToAssumeRole"
+            Effect: "Allow"
+            Action:
+              - "sts:AssumeRole"
+            Principal:
+              Service:
+                - "lambda.amazonaws.com"
+
+
